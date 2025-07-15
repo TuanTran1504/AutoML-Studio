@@ -16,6 +16,7 @@ global_train_path=None
 global_test_path=None
 global_missing = "No Missing Data"
 global_problem_types = None
+global_ts_mode = False
 
 def chon_file():
     global global_train_path, global_test_path
@@ -57,6 +58,9 @@ def chon_file():
         # Hiển thị column vào combobox
     target_combobox['values'] = columns
     time_col_combobox['values'] = columns
+    special_listbox.delete(0, tk.END)
+    for col in columns:
+        special_listbox.insert(tk.END, col)
     target_combobox.set('')  # reset combobox
     
     
@@ -69,9 +73,15 @@ def chon_target():
     if not target_column:
         label.config(text="Bạn chưa chọn target column.")
         return
+    # Get selected special columns
+    selected_indices = special_listbox.curselection()
+    special_columns = [special_listbox.get(i) for i in selected_indices]
+
+    # Handle special columns first
+    
     try:
         # Load data và lưu vào biến global
-        train, test = loading(global_train_path, global_test_path if global_test_path else None, num_fill_method, cat_fill_method, target_column=target_column)
+        train, test = loading(global_train_path, global_test_path if global_test_path else None, num_fill_method, cat_fill_method, target_column=target_column, special_columns=special_columns)
         if target_column not in train.columns:
             label.config(text=f" Cột '{target_column}' không tồn tại trong train data.")
             return
@@ -108,10 +118,13 @@ def detect_class():
         return
 
 def toggle_time_column_selection():
+    global global_ts_mode
     if is_time_series.get():
+        global_ts_mode = True
         time_col_label.pack(pady=2)
         time_col_combobox.pack(pady=5)
-    else:   
+    else:
+        global_ts_mode = False
         time_col_label.pack_forget()
         time_col_combobox.pack_forget()
 
@@ -167,19 +180,28 @@ def train_model():
             label.config(text=f"Đã train model multiclass.\nBest estimator: {opt.best_estimator_}\n{metric_name}={opt.best_score_}")
         else:
             print("Using regression model")
+
             if is_time_series.get():
                 time_col = time_col_combobox.get()
                 if not time_col:
                     label.config(text="Vui lòng chọn cột thời gian cho time series!")
                     return
-                global_train[time_col] = pd.to_datetime(global_train[time_col])
+                global_train['target_lag_1'] = global_train[global_target].shift(1)
+                global_train['target_lag_2'] = global_train[global_target].shift(2)
+                global_train.dropna(inplace=True)
+                global_train[time_col] = pd.to_datetime(global_train[time_col], errors='coerce')
+                global_train['month'] = global_train[time_col].dt.month
+                global_train['weekday'] = global_train[time_col].dt.weekday
+                global_train['year'] = global_train[time_col].dt.year
                 global_train.sort_values(by=time_col, inplace=True)
-                
+                global_train.drop(columns=[time_col], inplace=True)
+
+            X = global_train.drop(columns=global_target)
             y = np.log1p(global_train[global_target])
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=8)
             cat_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
 
-            opt=regression_model(cat_cols=cat_cols)
+            opt=regression_model(cat_cols=cat_cols, time_series=global_ts_mode)
             opt.fit(X_train, y_train)
             print(opt.best_estimator_)
             print(opt.best_score_)
@@ -221,6 +243,12 @@ cat_label.pack()
 cat_dropdown = tk.OptionMenu(root, selected_cat_method, *cat_methods)
 cat_dropdown.pack()
 
+# Cập nhật danh sách cột đặc biệt
+special_label = tk.Label(root, text="Chọn các cột chỉ có giá trị ở một vài thời điểm:")
+special_label.pack()
+
+special_listbox = tk.Listbox(root, selectmode=tk.MULTIPLE, exportselection=0, height=6)
+special_listbox.pack(pady=5)
 
 # Label target
 target_label = tk.Label(root, text="Chọn target column:")

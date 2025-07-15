@@ -10,6 +10,7 @@ from skopt.space import Real, Categorical, Integer
 from sklearn.compose import ColumnTransformer
 from collections import Counter
 from sklearn.metrics import mean_absolute_error, make_scorer, accuracy_score
+from sklearn.model_selection import TimeSeriesSplit
 
 def pre_loading(train_path="train.csv", test_path=None):
     try:
@@ -75,17 +76,22 @@ def pre_loading(train_path="train.csv", test_path=None):
         print(f"Error loading files: {e}")
         return None, None, None, None
         
-def loading(train_path="train.csv", test_path=None, num_method=None, cat_method=None, target_column=None, time_series=False, time_column=None):
+def loading(train_path="train.csv", test_path=None, num_method=None, cat_method=None, target_column=None, time_series=False, time_column=None, special_columns=None):
     try:
         # Load train bắt buộc
         train = pd.read_csv(train_path)
 
         # Load test nếu có
         test = pd.read_csv(test_path) if test_path else None
-
+        print(train[special_columns].isna().sum())
         print("Train data loaded successfully!")
         if test is not None:
             print("Test data loaded successfully!")
+        if special_columns is not None:
+            for col in special_columns:
+                mask = train[col].notna().cumsum() > 0
+                train.loc[mask, col] = train.loc[mask, col].ffill()
+        print(train[special_columns].isna().sum())
         train = train.dropna(subset=[target_column])
         # Xử lý missing data
         columns_to_fill = [col for col in train.columns if col != target_column]
@@ -246,6 +252,8 @@ def multiclass_model(cat_cols=None, rare_class_strategy="drop", min_class_size=5
     return opt, train
 def regression_model(cat_cols=None, time_series=False, time_column=None):
     # Preprocessing for categorical columns
+    cv=3 if time_series is False else TimeSeriesSplit(n_splits=3)
+
     if cat_cols:
         preprocessor = ColumnTransformer(
             transformers=[('cat', TargetEncoder(), cat_cols)],
@@ -275,7 +283,7 @@ def regression_model(cat_cols=None, time_series=False, time_column=None):
     opt = BayesSearchCV(
         pipe,
         search_space,
-        cv=3,
+        cv=cv,
         n_iter=10,
         scoring=scorer,  # or 'r2'
         random_state=8,
