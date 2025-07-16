@@ -189,28 +189,41 @@ def train_model():
                 global_train['target_lag_1'] = global_train[global_target].shift(1)
                 global_train['target_lag_2'] = global_train[global_target].shift(2)
                 global_train.dropna(inplace=True)
-                global_train[time_col] = pd.to_datetime(global_train[time_col], errors='coerce')
+                global_train[time_col] = pd.to_datetime(global_train[time_col])
                 global_train['month'] = global_train[time_col].dt.month
                 global_train['weekday'] = global_train[time_col].dt.weekday
                 global_train['year'] = global_train[time_col].dt.year
                 global_train.sort_values(by=time_col, inplace=True)
                 global_train.drop(columns=[time_col], inplace=True)
+                split_index = int(len(global_train) * 0.8)
+                train = global_train.iloc[:split_index]
+                test = global_train.iloc[split_index:]
 
-            X = global_train.drop(columns=global_target)
-            y = np.log1p(global_train[global_target])
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=8)
-            cat_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
+                X_train = train.drop(columns=[global_target])
+                y_train = train[global_target]
+                X_test = test.drop(columns=[global_target])
+                y_test = test[global_target]
+                cat_cols = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
+                num_cols = X_train.select_dtypes(include=['int64', 'float64']).columns.tolist()
 
-            opt=regression_model(cat_cols=cat_cols, time_series=global_ts_mode)
-            opt.fit(X_train, y_train)
+                opt=regression_model(cat_cols=cat_cols, time_series=global_ts_mode, num_cols=num_cols, log_transform=True)
+                opt.fit(X_train, y_train)
+            else:
+                X = global_train.drop(columns=global_target)
+                y = global_train[global_target]
+                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=8)
+                cat_cols = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
+                num_cols = X_train.select_dtypes(include=['int64', 'float64']).columns.tolist()
+
+                opt=regression_model(cat_cols=cat_cols, time_series=global_ts_mode, num_cols=num_cols, log_transform=True)
+                opt.fit(X_train, y_train)
             print(opt.best_estimator_)
             print(opt.best_score_)
             y_pred = opt.predict(X_test)
-            y_pred_original = np.expm1(y_pred)
-            y_test_original = np.expm1(y_test)
+            
 
-            print("MAE:", mean_absolute_error(y_test_original, y_pred_original))
-            print("MSE:", mean_squared_error(y_test_original, y_pred_original))
+            print("MAE:", mean_absolute_error(y_test, y_pred))
+            print("MSE:", mean_squared_error(y_test, y_pred))
             label.config(text=f"Đã train model regression.\nBest estimator: {opt.best_estimator_}\nBest score: {opt.best_score_}")
 
     except Exception as e:

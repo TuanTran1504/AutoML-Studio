@@ -11,6 +11,8 @@ from sklearn.compose import ColumnTransformer
 from collections import Counter
 from sklearn.metrics import mean_absolute_error, make_scorer, accuracy_score
 from sklearn.model_selection import TimeSeriesSplit
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer, TransformedTargetRegressor
 
 def pre_loading(train_path="train.csv", test_path=None):
     try:
@@ -250,26 +252,43 @@ def multiclass_model(cat_cols=None, rare_class_strategy="drop", min_class_size=5
     # Optimize Accuracy for multi-class (có thể đổi thành 'roc_auc_ovr' nếu muốn AUC)
     opt = BayesSearchCV(pipe, search_space, cv=3, n_iter=10, scoring=scorer, random_state=8, verbose=True)
     return opt, train
-def regression_model(cat_cols=None, time_series=False, time_column=None):
-    # Preprocessing for categorical columns
-    cv=3 if time_series is False else TimeSeriesSplit(n_splits=3)
+def regression_model(cat_cols=None, time_series=False, time_column=None, num_cols=None, log_transform=False):
+    # Choose CV strategy
+    cv = 3 if not time_series else TimeSeriesSplit(n_splits=3)
 
-    if cat_cols:
-        preprocessor = ColumnTransformer(
-            transformers=[('cat', TargetEncoder(), cat_cols)],
-            remainder='passthrough'
-        )
+    # Preprocessing
+    if cat_cols and num_cols:
+        preprocessor = ColumnTransformer(transformers=[
+            ('cat', OneHotEncoder(handle_unknown='ignore'), cat_cols),
+            ('num', StandardScaler(), num_cols)
+        ])
     else:
         preprocessor = 'passthrough'
 
-    # Pipeline combining preprocessing and regressor
+    # Base regressor pipeline
     pipe = Pipeline(steps=[
         ('preprocessor', preprocessor),
-        ('regressor', XGBRegressor(random_state=8, eval_metric='rmse'))
+        ('regressor', XGBRegressor(random_state=8, eval_metric='mae'))
     ])
 
-    # Hyperparameter search space for XGBRegressor
+    # Optional: Wrap with log-transform for the target
+    if log_transform:
+        pipe = TransformedTargetRegressor(
+            regressor=pipe,
+            func=np.log1p,
+            inverse_func=np.expm1
+        )
+
+    # Hyperparameter space
     search_space = {
+        'regressor__regressor__max_depth': Integer(2, 8),
+        'regressor__regressor__learning_rate': Real(0.001, 1.0, prior='log-uniform'),
+        'regressor__regressor__subsample': Real(0.5, 1.0),
+        'regressor__regressor__colsample_bytree': Real(0.5, 1.0),
+        'regressor__regressor__reg_lambda': Real(0.0, 10.0),
+        'regressor__regressor__reg_alpha': Real(0.0, 10.0),
+        'regressor__regressor__gamma': Real(0.0, 10.0)
+    } if log_transform else {
         'regressor__max_depth': Integer(2, 8),
         'regressor__learning_rate': Real(0.001, 1.0, prior='log-uniform'),
         'regressor__subsample': Real(0.5, 1.0),
@@ -278,14 +297,17 @@ def regression_model(cat_cols=None, time_series=False, time_column=None):
         'regressor__reg_alpha': Real(0.0, 10.0),
         'regressor__gamma': Real(0.0, 10.0)
     }
+
+    # Use MAE as a scoring metric
     scorer = make_scorer(mean_absolute_error, greater_is_better=False)
-    # Bayesian Optimization with cross-validation and RMSE scoring
+
+    # Bayesian Optimization
     opt = BayesSearchCV(
         pipe,
         search_space,
         cv=cv,
-        n_iter=10,
-        scoring=scorer,  # or 'r2'
+        n_iter=20,
+        scoring=scorer,
         random_state=8,
         verbose=True
     )
