@@ -13,6 +13,7 @@ from sklearn.metrics import mean_absolute_error, make_scorer, accuracy_score
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer, TransformedTargetRegressor
+from tkinter import filedialog, ttk, messagebox
 
 def pre_loading(train_path="train.csv", test_path=None):
     try:
@@ -87,15 +88,15 @@ def loading(train_path="train.csv", test_path=None, num_method=None, cat_method=
         test = pd.read_csv(test_path) if test_path else None
         print(train[special_columns].isna().sum())
         print("Train data loaded successfully!")
-        missing_ratio = train.isna().mean().sort_values(ascending=False)
-        train = train.drop(columns=missing_ratio[missing_ratio > 0.5].index)
+        
         if test is not None:
             print("Test data loaded successfully!")
         if special_columns is not None:
             for col in special_columns:
                 mask = train[col].notna().cumsum() > 0
                 train.loc[mask, col] = train.loc[mask, col].ffill()
-        print(train[special_columns].isna().sum())
+        missing_ratio = train.isna().mean().sort_values(ascending=False)
+        train = train.drop(columns=missing_ratio[missing_ratio > 0.5].index)
         train = train.dropna(subset=[target_column])
         # Xử lý missing data
         columns_to_fill = [col for col in train.columns if col != target_column]
@@ -138,7 +139,7 @@ def loading(train_path="train.csv", test_path=None, num_method=None, cat_method=
 
             elif method == "drop":
                 return df.dropna()
-
+                
             else:
                 print("Unknown categorical fill method:", method)
                 return df
@@ -149,8 +150,20 @@ def loading(train_path="train.csv", test_path=None, num_method=None, cat_method=
         if cat_method != "drop":
             train[categorical_cols] = fill_categorical(train[categorical_cols], cat_method)
         if num_method == "drop" or cat_method == "drop":
-            
-            train = train.dropna()
+            before = len(train)
+            dropped_train = train.dropna()
+            after = len(dropped_train)
+            dropped_percent = (before - after) / before * 100
+            # If too much data is lost (e.g., over 10%), ask the user
+            if dropped_percent > 10:
+                response = messagebox.askyesno(
+                        "Warning: Too Much Data Loss", "Do you want to proceed?"
+                        )
+                if response:
+                    return dropped_train, None
+                else:
+                    messagebox.showinfo("Cancelled", "Please choose a different missing value method.")
+                    return None, None  # Return None to indicate failure
 
             
         
@@ -258,12 +271,12 @@ def multiclass_model(cat_cols=None, rare_class_strategy="drop", min_class_size=5
     # Optimize Accuracy for multi-class 
     opt = BayesSearchCV(pipe, search_space, cv=cv, n_iter=n_iter, scoring=scorer, random_state=8, verbose=True)
     return opt, train
-def regression_model(cat_cols=None, time_series=False, time_column=None, num_cols=None, log_transform=False, n_iter=20, cv=10):
+def regression_model(cat_cols=None, time_series=False, num_cols=None, log_transform=False, n_iter=20, cv=10):
     # Choose CV strategy
     cv = cv if not time_series else TimeSeriesSplit(n_splits=cv)
 
     # Preprocessing
-    if cat_cols and num_cols:
+    if cat_cols or num_cols:
         preprocessor = ColumnTransformer(transformers=[
             ('cat', OneHotEncoder(handle_unknown='ignore'), cat_cols),
             ('num', StandardScaler(), num_cols)

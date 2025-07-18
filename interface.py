@@ -82,12 +82,10 @@ def chon_target():
     try:
         # Load data và lưu vào biến global
         train, test = loading(global_train_path, global_test_path if global_test_path else None, num_fill_method, cat_fill_method, target_column=target_column, special_columns=special_columns)
-        if target_column not in train.columns:
-            label.config(text=f" Cột '{target_column}' không tồn tại trong train data.")
+        if train is None:
             return
         global_train = train
         global_test = test
-        print(global_train[global_target].describe())
         if test is not None:
             label.config(text=f"Đã load train & test.\nTrain shape: {train.shape}\nTest shape: {test.shape}")
         else:
@@ -165,7 +163,7 @@ def train_model():
             
             print("ROC_AUC:", roc_auc_score(y_test, y_pred))
         elif global_problem_types == "multiclass":
-            print(global_train)
+
             cat_cols = global_train.select_dtypes(include=['object', 'category']).columns.tolist()
             num_cols = global_train.select_dtypes(include=['int64', 'float64']).columns.tolist()
 
@@ -214,20 +212,16 @@ def train_model():
                 y_train = train[global_target]
                 X_test = test.drop(columns=[global_target])
                 y_test = test[global_target]
-                cat_cols = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
-                num_cols = X_train.select_dtypes(include=['int64', 'float64']).columns.tolist()
-                #Model for regression with time series
-                opt=regression_model(cat_cols=cat_cols, time_series=global_ts_mode, num_cols=num_cols, log_transform=True, n_iter=n_iter, cv=cv_folds)
-                opt.fit(X_train, y_train)
             else:
                 X = global_train.drop(columns=global_target)
                 y = global_train[global_target]
                 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=8)
-                cat_cols = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
-                num_cols = X_train.select_dtypes(include=['int64', 'float64']).columns.tolist()
-                #Model for regression
-                opt=regression_model(cat_cols=cat_cols, time_series=global_ts_mode, num_cols=num_cols, log_transform=True, n_iter=n_iter, cv=cv_folds)
-                opt.fit(X_train, y_train)
+
+            cat_cols = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
+            num_cols = X_train.select_dtypes(include=['int64', 'float64']).columns.tolist()
+            #Model for regression
+            opt=regression_model(cat_cols=cat_cols, time_series=global_ts_mode, num_cols=num_cols, log_transform=True, n_iter=n_iter, cv=cv_folds)
+            opt.fit(X_train, y_train)
             print(opt.best_estimator_)
             print(opt.best_score_)
             y_pred = opt.predict(X_test)
