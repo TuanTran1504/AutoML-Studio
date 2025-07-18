@@ -87,6 +87,8 @@ def loading(train_path="train.csv", test_path=None, num_method=None, cat_method=
         test = pd.read_csv(test_path) if test_path else None
         print(train[special_columns].isna().sum())
         print("Train data loaded successfully!")
+        missing_ratio = train.isna().mean().sort_values(ascending=False)
+        train = train.drop(columns=missing_ratio[missing_ratio > 0.5].index)
         if test is not None:
             print("Test data loaded successfully!")
         if special_columns is not None:
@@ -140,13 +142,17 @@ def loading(train_path="train.csv", test_path=None, num_method=None, cat_method=
             else:
                 print("Unknown categorical fill method:", method)
                 return df
+        
         # Xử lý train
         if num_method != "drop":
             train[numeric_cols] = fill_numeric(train[numeric_cols], num_method)
         if cat_method != "drop":
             train[categorical_cols] = fill_categorical(train[categorical_cols], cat_method)
         if num_method == "drop" or cat_method == "drop":
+            
             train = train.dropna()
+
+            
         
         
 
@@ -173,12 +179,12 @@ def loading(train_path="train.csv", test_path=None, num_method=None, cat_method=
         print(f"Error loading data: {e}")
         raise
 
-def model(cat_cols=None):    
-    if cat_cols:
-        preprocessor = ColumnTransformer(
-            transformers=[('cat', TargetEncoder(), cat_cols)],
-            remainder='passthrough'
-        )
+def model(cat_cols=None, num_cols=None, n_iter=20, cv=10):    
+    if cat_cols and num_cols:
+        preprocessor = ColumnTransformer(transformers=[
+            ('cat', OneHotEncoder(handle_unknown='ignore'), cat_cols),
+            ('num', StandardScaler(), num_cols)
+        ])
     else:
         preprocessor = 'passthrough'
     pipe = Pipeline(steps=[
@@ -197,9 +203,9 @@ def model(cat_cols=None):
         'clf__reg_alpha': Real(0.0, 10.0),
         'clf__gamma': Real(0.0, 10.0)
     }
-    opt = BayesSearchCV(pipe, search_space, cv=3, n_iter=10, scoring='roc_auc', random_state=8, verbose=True)
+    opt = BayesSearchCV(pipe, search_space, cv=cv, n_iter=n_iter, scoring='roc_auc', random_state=8, verbose=True)
     return opt
-def multiclass_model(cat_cols=None, rare_class_strategy="drop", min_class_size=5, merge_class_value=0, target_column=None,train=None):
+def multiclass_model(cat_cols=None, rare_class_strategy="drop", min_class_size=5, merge_class_value=0, target_column=None,train=None, num_cols=None, n_iter=20, cv=10):
     if train is not None:
         class_counts = Counter(train[target_column])
         
@@ -224,11 +230,11 @@ def multiclass_model(cat_cols=None, rare_class_strategy="drop", min_class_size=5
     df = train.drop(columns=target_column)
     cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
     # Preprocessing
-    if cat_cols:
-        preprocessor = ColumnTransformer(
-            transformers=[('cat', TargetEncoder(), cat_cols)],
-            remainder='passthrough'
-        )
+    if cat_cols and num_cols:
+        preprocessor = ColumnTransformer(transformers=[
+            ('cat', OneHotEncoder(handle_unknown='ignore'), cat_cols),
+            ('num', StandardScaler(), num_cols)
+        ])
     else:
         preprocessor = 'passthrough'
 
@@ -249,12 +255,12 @@ def multiclass_model(cat_cols=None, rare_class_strategy="drop", min_class_size=5
         'clf__gamma': Real(0.0, 10.0)
     }
     scorer = make_scorer(accuracy_score, greater_is_better=True)
-    # Optimize Accuracy for multi-class (có thể đổi thành 'roc_auc_ovr' nếu muốn AUC)
-    opt = BayesSearchCV(pipe, search_space, cv=3, n_iter=10, scoring=scorer, random_state=8, verbose=True)
+    # Optimize Accuracy for multi-class 
+    opt = BayesSearchCV(pipe, search_space, cv=cv, n_iter=n_iter, scoring=scorer, random_state=8, verbose=True)
     return opt, train
-def regression_model(cat_cols=None, time_series=False, time_column=None, num_cols=None, log_transform=False):
+def regression_model(cat_cols=None, time_series=False, time_column=None, num_cols=None, log_transform=False, n_iter=20, cv=10):
     # Choose CV strategy
-    cv = 3 if not time_series else TimeSeriesSplit(n_splits=3)
+    cv = cv if not time_series else TimeSeriesSplit(n_splits=cv)
 
     # Preprocessing
     if cat_cols and num_cols:
@@ -306,7 +312,7 @@ def regression_model(cat_cols=None, time_series=False, time_column=None, num_col
         pipe,
         search_space,
         cv=cv,
-        n_iter=20,
+        n_iter=n_iter,
         scoring=scorer,
         random_state=8,
         verbose=True
@@ -319,6 +325,8 @@ def regression_model(cat_cols=None, time_series=False, time_column=None, num_col
 
 def detect_class_type(y, class_threshold=15):
     num_classes = y.nunique()
+    print(f"Detected {num_classes} unique classes in target variable.")
+    print(f"Number of unique classes: {num_classes}")
     dtype = y.dtype
     y_min, y_max = y.min(), y.max()
     

@@ -7,7 +7,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 import numpy as np
 import pandas as pd
-from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.metrics import mean_absolute_error, mean_squared_error, roc_auc_score
 # Biến toàn cục để lưu data
 global_train = None
 global_test = None
@@ -103,7 +103,6 @@ def detect_class():
     if global_target is None:
         label.config(text="Vui lòng chọn target column trước!")
         return
-    print(len(global_train))
     pred_type = detect_class_type(global_train[global_target])
     if global_problem_types is None:
         global_problem_types = selected_prob.get()
@@ -131,7 +130,8 @@ def toggle_time_column_selection():
 
 def train_model():
     global global_train, global_test, global_target, global_problem_types
-
+    n_iter = int(n_iter_var.get())
+    cv_folds = int(cv_var.get())
     if global_train is None or global_target is None:
         label.config(text="Vui lòng chọn file trước!")
         return
@@ -150,20 +150,27 @@ def train_model():
                 y_encoded = le.fit_transform(y)
             # Tách tập train/validation
             cat_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
-            X_train, X_val, y_train, y_val = train_test_split(X, y_encoded, test_size=0.2, stratify=y_encoded, random_state=8)
+            num_cols = X.select_dtypes(include=['int64', 'float64']).columns.tolist()
+            X_train, X_test, y_train, y_test = train_test_split(X, y_encoded, test_size=0.2, stratify=y_encoded, random_state=8)
 
             # Khởi tạo và train model
-            opt = model(cat_cols)
+            opt = model(cat_cols, num_cols=num_cols, n_iter=n_iter, cv=cv_folds)
             opt.fit(X_train, y_train)
 
             # Hiển thị kết quả
             print("Best estimator:", opt.best_estimator_)
             print("Best training score:", opt.best_score_)
             label.config(text=f"Đã train model binary.\nBest estimator: {opt.best_estimator_}\nBest score: {opt.best_score_}")
+            y_pred = opt.predict(X_test)
+            
+            print("ROC_AUC:", roc_auc_score(y_test, y_pred))
         elif global_problem_types == "multiclass":
             print(global_train)
             cat_cols = global_train.select_dtypes(include=['object', 'category']).columns.tolist()
-            opt, global_train=multiclass_model(cat_cols=cat_cols, target_column=global_target, train=global_train)
+            num_cols = global_train.select_dtypes(include=['int64', 'float64']).columns.tolist()
+
+            #Model for multiclass classification
+            opt, global_train=multiclass_model(cat_cols=cat_cols, target_column=global_target, train=global_train, num_cols=num_cols, n_iter=n_iter, cv=cv_folds)
             print("Using multiclass model")
             X = global_train.drop(columns=global_target)
             y = global_train[global_target]
@@ -176,7 +183,11 @@ def train_model():
             print(opt.best_estimator_)
             print(opt.best_score_)
             metric_name = opt.scoring._score_func.__name__
+            y_pred = opt.predict(X_test)
+            
 
+            print("Accuracy:", accuracy_score(y_test, y_pred))
+    
             label.config(text=f"Đã train model multiclass.\nBest estimator: {opt.best_estimator_}\n{metric_name}={opt.best_score_}")
         else:
             print("Using regression model")
@@ -205,8 +216,8 @@ def train_model():
                 y_test = test[global_target]
                 cat_cols = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
                 num_cols = X_train.select_dtypes(include=['int64', 'float64']).columns.tolist()
-
-                opt=regression_model(cat_cols=cat_cols, time_series=global_ts_mode, num_cols=num_cols, log_transform=True)
+                #Model for regression with time series
+                opt=regression_model(cat_cols=cat_cols, time_series=global_ts_mode, num_cols=num_cols, log_transform=True, n_iter=n_iter, cv=cv_folds)
                 opt.fit(X_train, y_train)
             else:
                 X = global_train.drop(columns=global_target)
@@ -214,8 +225,8 @@ def train_model():
                 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=8)
                 cat_cols = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
                 num_cols = X_train.select_dtypes(include=['int64', 'float64']).columns.tolist()
-
-                opt=regression_model(cat_cols=cat_cols, time_series=global_ts_mode, num_cols=num_cols, log_transform=True)
+                #Model for regression
+                opt=regression_model(cat_cols=cat_cols, time_series=global_ts_mode, num_cols=num_cols, log_transform=True, n_iter=n_iter, cv=cv_folds)
                 opt.fit(X_train, y_train)
             print(opt.best_estimator_)
             print(opt.best_score_)
@@ -257,7 +268,7 @@ cat_dropdown = tk.OptionMenu(root, selected_cat_method, *cat_methods)
 cat_dropdown.pack()
 
 # Cập nhật danh sách cột đặc biệt
-special_label = tk.Label(root, text="Chọn các cột chỉ có giá trị ở một vài thời điểm:")
+special_label = tk.Label(root, text="Choose columns that has value periodically:")
 special_label.pack()
 
 special_listbox = tk.Listbox(root, selectmode=tk.MULTIPLE, exportselection=0, height=6)
@@ -298,6 +309,20 @@ time_col_combobox = ttk.Combobox(root, state="readonly")
 # Nút bắt đầu train
 btn_class = tk.Button(root, text="Confirm Preprocessing", command=detect_class)
 btn_class.pack(pady=10)
+
+# Number of iterations for tuning
+n_iter_label = tk.Label(root, text="Number of iterations (BayesSearchCV):")
+n_iter_label.pack()
+n_iter_var = tk.StringVar(value="20")  # default value
+n_iter_entry = tk.Entry(root, textvariable=n_iter_var)
+n_iter_entry.pack(pady=5)
+
+# Number of cross-validation folds
+cv_label = tk.Label(root, text="Number of cross-validation folds:")
+cv_label.pack()
+cv_var = tk.StringVar(value="3")  # default value
+cv_entry = tk.Entry(root, textvariable=cv_var)
+cv_entry.pack(pady=5)
 
 # Nút bắt đầu train
 btn_train = tk.Button(root, text="Bắt đầu train", command=train_model)
